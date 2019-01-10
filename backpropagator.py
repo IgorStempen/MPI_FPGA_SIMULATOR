@@ -2,7 +2,26 @@ import glob
 import os
 import networkx as nx
 
-
+#################################################################################################
+#                                                                                     
+# Class representing the nodes of the graph which describe the input textlog
+#
+# Class Attributes:
+#
+#	type: the type of the node (worker, message, etc...)
+#	starTime: the start time of the node; depends on the end times of ancestor nodes
+#	endTime: the end time of the node
+#	length: end time - start time
+#	visited: used when doing backpropagation; this flag denotes whether the node has been visited
+#	needArrow: used when initially populating the graph; a node that "needs an arrow" means that 
+#			   a message node points at it
+#	fromRank: in the case of a "message" node, this represents where the message originated from; 
+#			  otherwise, this is simply the rank of the node
+#	toRank: in the case of a "message" node, this represents where the message goes to; 
+#			  otherwise, this is simply the rank of the node
+#	associatedRank: In the case of MPI_Send_End, we need to keep track of the rank that is receiving the message
+# 
+##################################################################################################
 class GraphNode:
 	def __init__(self, nodeType, startTime, endTime, needArrow, fromRank, toRank):
 		self.type = nodeType
@@ -15,10 +34,12 @@ class GraphNode:
 		self.toRank = toRank
 		self.associatedRank = -1
 
+	#method for printing a node
 	def __str__(self):
 		return "(type:{}, startTime:{}, endTime:{}, length:{}, visited:{}, needArow:{}, fromRank:{}, toRank:{})".format( \
 			self.type, self.startTime, self.endTime, self.length, self.visited, self.needArrow, self.fromRank, self.toRank)
 
+	#update the start time when backpropogating
 	def updateStartTime(self, newStartTime):
 		if (self.visited):
 			if (newStartTime > self.startTime):
@@ -62,6 +83,7 @@ class GraphNode:
 			self.startTime = startTime
 			self.length = self.endTime - self.startTime
 
+	#basically check to see if the given "message" should start from this node
 	def needsArrowOut(self, successor, arrowStartTime, fromRank):
 		if ((self.needArrow == "Need_Arrow_Out") and (self.fromRank == fromRank) and (self.type == "MPI_Send_Start")):
 			endTime = successor.getEndTime()
@@ -70,6 +92,7 @@ class GraphNode:
 
 		return False
 
+	#basically check to see if the given "message" should end at this node
 	def needsArrowIn(self, successor, arrowEndTime, toRank):
 		if ((self.needArrow == "Need_Arrow_In") and (self.fromRank == toRank) and (self.type == "MPI_Recv_Start")):
 			endTime = successor.getEndTime()
@@ -96,12 +119,26 @@ class GraphNode:
 	def setAssociatedRank(self, rank):
 		self.associatedRank = rank
 
+#################################################################################################
+#                                                                                     
+# Class representing the graph that represents the textlog
+#
+# Class Attributes:
+#
+#	graph: the graph
+#	ranks: a dictionary that contains the final node of each rank currently in the graph;
+#		   used when populating the grab
+#	arrowList: a list of all message nodes; these nodes get inserted into the graph last. and have to
+#			   to be stored temporarily in this structure
+# 
+##################################################################################################
 class GraphWrapper:
 	def __init__(self):
 		self.graph = nx.DiGraph()
 		self.ranks = dict()
 		self.arrowList = list()
 
+	#for every non message node, insert it directly after the last node of the same rank
 	def add_new_node(self, rank, node, updateEndTime):
 		self.graph.add_node(node)
 
@@ -116,21 +153,28 @@ class GraphWrapper:
 	def add_arrow_node_deferred(self, node):
 		self.arrowList.append(node)
 
-	#might still be a bug here; be very careful with this function
+	#place all the "message" nodes after all other nodes have already been placed
 	def add_all_deferred_arrows(self):
 		for arrow in self.arrowList:
 			self.graph.add_node(arrow)
 			arrowPlaced = False
+
+			#iterate through all nodes to see which one the "message" node should start from
 			for outNode in self.graph.nodes(data=False):
 				outSuccessor = self.getSoleSuccessor(outNode)
+
+				#check to see if this message should originate from this node
 				if (outNode.needsArrowOut(outSuccessor, arrow.getStartTime(), arrow.getFromRank())):
 					outNode.setEndTime(arrow.getStartTime())
 					outSuccessor.setStartTime(arrow.getStartTime())
 					outSuccessor.setAssociatedRank(arrow.getToRank())
 					self.graph.add_edge(outNode, arrow)
 
+					#iterate through all nodes to see which one the "message" node should end at
 					for inNode in self.graph.nodes(data=False):
 						inSuccessor = self.getSoleSuccessor(inNode)
+
+						#check to see if this message should point at this node
 						if (inNode.needsArrowIn(inSuccessor, arrow.getEndTime(), arrow.getToRank())):
 							inSuccessor.setStartTime(arrow.getEndTime())
 							self.graph.add_edge(arrow, inSuccessor)
@@ -139,6 +183,8 @@ class GraphWrapper:
 
 					if (arrowPlaced == True):
 						break
+
+			#if we have not placed the message node, something went wrong
 			if (arrowPlaced != True):
 				print("ERROR!\n")
 
@@ -153,10 +199,12 @@ class GraphWrapper:
 		for node in self.graph.nodes(data=False):
 			print(node)
 
+	#propogate the startTime change to the successor
 	def propagate(self, node, newEndTime):
 		for successor in self.graph.successors(node):
 			self.propagate(successor, successor.updateStartTime(newEndTime))
 
+	#if the node matches the target type, change its length, and propogate the change
 	def backPropagate(self, targetType, speedupFactor):
 		for node in self.graph.nodes(data=False):
 			if (node.isTargetType(targetType)):
@@ -164,6 +212,8 @@ class GraphWrapper:
 				self.propagate(node, newEndTime)
 				self.markAllNodesUnvisited()
 
+	#if the node matches the target type and rank, change its length, and propogate the change
+	#Used for doing backpropagation on HW rank speedup
 	def backPropagateHW(self, speedupFactor, rank):
 		for node in self.graph.nodes(data=False):
 			if (node.isTargetType("Worker")):
@@ -172,6 +222,9 @@ class GraphWrapper:
 					self.propagate(node, newEndTime)
 					self.markAllNodesUnvisited()
 				
+	#used for back propogation for network speedup
+	#need to do it for two types of nodes: messages, and the second half of MPI_Send
+	#for the latter, we need to know its associated rank (ie which rank does the MPI_send send to)
 	def backPropagateNetwork(self, speedupFactor, fromRank, toRank):
 		for node in self.graph.nodes(data=False):
 			if (node.isTargetType("Arrow")):
@@ -192,7 +245,25 @@ class GraphWrapper:
 
 
 
-
+#################################################################################################
+#                                                                                     
+# Class representing primitive types in the textlog file. One or more nodes are spwaned from primitives
+#
+# Class Attributes:
+#
+#	startTime: the start time of the primitive
+#	endTime: the end time of the primitive (could be same as start time)
+#	fromRank: in the case of a "message", this represents where the message originated from; 
+#			  otherwise, this is simply the rank of the primitive
+#	toRank: in the case of a "message", this represents where the message goes to; 
+#			  otherwise, this is simply the rank of the primitive
+#	category: type of primitive (message, mpi_send, mpi_recv)
+#	startnode: a primitive corresponds to one or more nodes in the graph. The startNode represents the first of
+#			   these nodes. It is necessary to keep track of it to update the start time of the primitive
+#	startnode: a primitive corresponds to one or more nodes in the graph. The endNode represents the last of
+#			   these nodes. It is necessary to keep track of it to update the end time of the primitive
+# 
+##################################################################################################
 class Primitive:
 	def __init__(self, startTime, endTime, fromRank, toRank, category):
 		self.startTime = startTime
@@ -203,14 +274,22 @@ class Primitive:
 		self.startNode = 0
 		self.endNode = 0
 
+	#write primitive back to file
 	def toFile(self):
 		return "Primitive[ TimeBBox({0},{1}) Category={2} ({0}, {3}) ({1}, {4}) ]\n".format(self.startTime, self.endTime, self.category, self.fromRank, self.toRank)
 
+	#spawn the corresponding graph nodes of this primitive, and keep track of the first and last nodes
+	#Every primitive except for messages are followed by worker nodes: these nodes represent the work being done by the rank
 	def spawnNodes(self, G, categoryDict):
 		categoryType = categoryDict[self.category]
 
+		#spawn the following nodes, they are connected to each other linearly:
+		# MPI_Send_Start --> MPI_Send_End --> Worker
+		#MPI_Send has to be split into two halves, the first half represents all of MPI_Send before the message is sent out
 		if (categoryType == "MPI_Send"):
 
+			#the end time of MPI_Send_Start and the start time of MPI_Send_End is determined by when the message arrives at MPI_Send_End
+			#so we put placeholder values of -1 for the times that we do not know
 			startSendNode = GraphNode("MPI_Send_Start", self.startTime, -1, "Need_Arrow_Out", self.fromRank, self.toRank)
 			endSendNode = GraphNode("MPI_Send_End", -1, self.endTime, "No", self.fromRank, self.toRank)
 			workNode = GraphNode("Worker", self.endTime, -1, "No", self.fromRank, self.toRank)
@@ -218,13 +297,19 @@ class Primitive:
 			self.startNode = startSendNode
 			self.endNode = endSendNode
 
+			#add nodes to the graph
 			G.add_new_node(self.fromRank, startSendNode, True)
 			G.add_new_node(self.fromRank, endSendNode, False)
 			G.add_new_node(self.fromRank, workNode, True)
 
 
+		#spawn the following nodes, they are connected to each other linearly:
+		# MPI_Recv_Start --> MPI_Recv_End --> Worker
+		#MPI_Recv has to be split into two halves, the first half represents all of MPI_Recv before the message is recieved
 		elif (categoryType == "MPI_Recv"):
 
+			#the end time of MPI_Recv_Start and the start time of MPI_Recv_End is determined by when the message arrives at MPI_Recv_End
+			#so we put placeholder values of -1 for the times that we do not know
 			startRecvNode = GraphNode("MPI_Recv_Start", self.startTime, self.startTime, "Need_Arrow_In", self.fromRank, self.toRank)
 			endRecvNode = GraphNode("MPI_Recv_End", -1, self.endTime, "No", self.fromRank, self.toRank)
 			workNode = GraphNode("Worker", self.endTime, -1, "No", self.fromRank, self.toRank)
@@ -232,10 +317,12 @@ class Primitive:
 			self.startNode = startRecvNode
 			self.endNode = endRecvNode
 
+			#add nodes to the graph
 			G.add_new_node(self.fromRank, startRecvNode, True)
 			G.add_new_node(self.fromRank, endRecvNode, True)
 			G.add_new_node(self.fromRank, workNode, True)
 
+		#messages have to be handled at the very end, so we defer them until later
 		elif (categoryType == "message"):
 
 			arrowNode = GraphNode("Arrow", self.startTime, self.endTime, "No", self.fromRank, self.toRank)
@@ -252,6 +339,7 @@ class Primitive:
 			self.startNode = finalNode
 			self.endNode = 0
 
+			#add nodes to the graph
 			G.add_new_node(self.fromRank, finalNode, True)
 
 		else:
@@ -262,9 +350,11 @@ class Primitive:
 			self.startNode = otherNode
 			self.endNode = 0
 
+			#add nodes to the graph
 			G.add_new_node(self.fromRank, otherNode, True)
 			G.add_new_node(self.fromRank, workNode, True)
 
+	#basically after all backpropogation is done, use the start and end nodes for this primitive to update its start and end times
 	def updateTimesFromSpawnedNodes(self):
 		self.startTime = self.startNode.getStartTime()
 		if (self.endNode != 0):
@@ -273,8 +363,10 @@ class Primitive:
 			self.endTime = self.startNode.getEndTime()
 
 
+#process a line of the textlog
 def processLogLine(line, categoryDict, primitiveList, newTextLogFile, G):
 	if line.startswith("Category"):
+		#get the category IDs and what category they correspond to
 		categoryDict[int(line.split("index=")[1].split("name")[0])] = line.split("name=")[1].split("topo")[0].strip()
 		newTextLogFile.write(line)
 
@@ -292,11 +384,13 @@ def processLogLine(line, categoryDict, primitiveList, newTextLogFile, G):
 			toRank = fromRank
 
 
-
+		#create a new primitive object, spawn nodes from it, and add them to the graph
+		#keep track of primitives in a primitive list
 		newPrimitive = Primitive(startTime, endTime, fromRank, toRank, category)
 		newPrimitive.spawnNodes(G, categoryDict)
 		primitiveList.append(newPrimitive)
 
+#add all updated primitives to the new textlog file
 def addPrimitvesToFile(primitiveList, newTextLogFile):
 	newTextLogFile.write("\n")
 	for primitive in primitiveList:
@@ -307,6 +401,7 @@ def processTextLog(oldTextlogFile, newTextLogFile, categoryDict, primitiveList, 
 	for line in oldTextlogFile:
 		processLogLine(line, categoryDict, primitiveList, newTextLogFile, G)
 
+	#all message nodes that have been deffered are now finally added to the graph
 	G.add_all_deferred_arrows()
 
 
@@ -323,6 +418,7 @@ def main(HWRankAccelerationFactors, NWAccelerationFactors):
 
 	processTextLog(oldTextlogFile, newTextLogFile, categoryDict, primitiveList, graph)
 
+	#parse the arguments that have been passed in and see if we need to do any backpropogation
 	for i in range(len(HWRankAccelerationFactors)):
 		if (HWRankAccelerationFactors[i] != 1):
 			graph.backPropagateHW(HWRankAccelerationFactors[i], i)
