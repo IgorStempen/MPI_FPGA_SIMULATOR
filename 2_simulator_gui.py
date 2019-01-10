@@ -115,7 +115,7 @@ class MPI_Simulator_GUI(QDialog):
     ##                                                                        ##
     ############################################################################
     def selectProgramFile(self):
-        self.programFile = QFileDialog.getExistingDirectory(self, 'Select Directory', '/home/capstone')
+        self.programFile = QFileDialog.getExistingDirectory(self, 'Select Directory')
         print(self.programFile)
         
         global filePath
@@ -550,7 +550,7 @@ class Starter_GUI(QDialog):
 
     def openFromConfig(self):
         print("trying to load config file")
-        self.configFile = QFileDialog.getOpenFileName(self, 'Open File', '/~')
+        self.configFile = QFileDialog.getOpenFileName(self, 'Open File')
         print(self.configFile[0])
         self.network_connections, self.hardware_nodes = workflowScript.loadParameters(self.configFile[0])
         print("Read following values from config file")
