@@ -33,6 +33,8 @@ class GraphNode:
 		self.fromRank = fromRank
 		self.toRank = toRank
 		self.associatedRank = -1
+		self.arrowArrivalReferenceNode = -1;
+		self.ancestorEndTimes = [-1, -1]
 
 	#method for printing a node
 	def __str__(self):
@@ -40,21 +42,35 @@ class GraphNode:
 			self.type, self.startTime, self.endTime, self.length, self.visited, self.needArrow, self.fromRank, self.toRank)
 
 	#update the start time when backpropogating
-	def updateStartTime(self, newStartTime):
-		if (self.visited):
-			if (newStartTime > self.startTime):
-				self.startTime = newStartTime
-				self.endTime = self.startTime + self.length
-		else:
+	def updateStartTime(self, newStartTime, index):
+		#if (self.visited):
+			#if (newStartTime > self.startTime):
+				#self.startTime = newStartTime
+				#self.endTime = self.startTime + self.length
+		#else:
+		if (self.type != "MPI_Recv_End"):
 			self.startTime = newStartTime
 			self.endTime = self.startTime + self.length
-			self.visited = 1;
+			#if (self.type == "Arrow"):
+				#if (self.endTime < self.arrowArrivalReferenceNode.getStartTime()):
+					#self.endTime = self.arrowArrivalReferenceNode.getStartTime()
+					#self.length = self.endTime - self.startTime
+		else:
+			self.ancestorEndTimes[index] = newStartTime
+			self.startTime = max(self.ancestorEndTimes[0], self.ancestorEndTimes[1])
+			self.endTime = self.startTime + self.length
+			#self.visited = 1;
 
 		return self.endTime
 
 	def speedup(self, speedup):
 		self.length = self.length / speedup
 		self.endTime = self.startTime + self.length
+
+		if (self.type == "Arrow"):
+			if (self.endTime < self.arrowArrivalReferenceNode.getStartTime()):
+				self.endTime = self.arrowArrivalReferenceNode.getStartTime()
+				self.length = self.endTime - self.startTime
 
 		return self.endTime
 
@@ -66,6 +82,9 @@ class GraphNode:
 
 	def markNotVisited(self):
 		self.visited = 0;
+
+	def getType(self):
+		return self.type
 
 	def getEndTime(self):
 		return self.endTime
@@ -118,6 +137,15 @@ class GraphNode:
 
 	def setAssociatedRank(self, rank):
 		self.associatedRank = rank
+
+	def setArrowEarliestArrivalRef(self, node):
+		self.arrowArrivalReferenceNode = node
+
+	def getArrowEarliestArrivalRef(self):
+		return self.arrowArrivalReferenceNode
+
+	def setAncestorEndTimes(self, endTime, index):
+		self.ancestorEndTimes[index] = endTime
 
 #################################################################################################
 #                                                                                     
@@ -177,6 +205,8 @@ class GraphWrapper:
 						#check to see if this message should point at this node
 						if (inNode.needsArrowIn(inSuccessor, arrow.getEndTime(), arrow.getToRank())):
 							inSuccessor.setStartTime(arrow.getEndTime())
+							inSuccessor.setAncestorEndTimes(arrow.getEndTime(), 1)
+							arrow.setArrowEarliestArrivalRef(inNode)
 							self.graph.add_edge(arrow, inSuccessor)
 							arrowPlaced = True
 							break
@@ -202,7 +232,12 @@ class GraphWrapper:
 	#propogate the startTime change to the successor
 	def propagate(self, node, newEndTime):
 		for successor in self.graph.successors(node):
-			self.propagate(successor, successor.updateStartTime(newEndTime))
+			index = 0
+			if (node.getType() == "Arrow"):
+				index = 1
+				#self.propagate(node.getArrowEarliestArrivalRef(), node.getArrowEarliestArrivalRef().updateStartTime(newEndTime, index))
+			#else:
+			self.propagate(successor, successor.updateStartTime(newEndTime, index))
 
 	#if the node matches the target type, change its length, and propogate the change
 	def backPropagate(self, targetType, speedupFactor):
@@ -312,6 +347,8 @@ class Primitive:
 			#so we put placeholder values of -1 for the times that we do not know
 			startRecvNode = GraphNode("MPI_Recv_Start", self.startTime, self.startTime, "Need_Arrow_In", self.fromRank, self.toRank)
 			endRecvNode = GraphNode("MPI_Recv_End", -1, self.endTime, "No", self.fromRank, self.toRank)
+			endRecvNode.setAncestorEndTimes(startRecvNode.getEndTime(), 0)
+			endRecvNode.setArrowEarliestArrivalRef(startRecvNode)
 			workNode = GraphNode("Worker", self.endTime, -1, "No", self.fromRank, self.toRank)
 
 			self.startNode = startRecvNode
@@ -376,6 +413,20 @@ def processLogLine(line, categoryDict, primitiveList, newTextLogFile, G):
 		startTime = float(line.split("(", 1)[1].split(",", 1)[0])
 		endTime = float(line.split(",", 1)[1].split(")", 1)[0])
 
+		#its possible for messages to travel backwards in time for some reason
+		#thowever the above method of extracting start time and end time doesnt work in case of time travelling messages
+		#this fix ensures the start times and end times are always correct for messages
+		if (categoryDict[category] == "message"):
+			checkStartTime = float(line.split("Category=")[1].split("(", 1)[1].split(",", 1)[0])
+			checkEndTime = float(line.split("Category=")[1].split(")", 1)[1].split("(", 1)[1].split(",", 1)[0])
+
+			if (checkStartTime > checkEndTime):
+				temp = startTime
+				startTime = endTime
+				endTime = temp
+
+
+
 		fromRank = int(line.split("Category=")[1].split(",", 1)[1].split(")", 1)[0])
 
 		if (startTime != endTime):
@@ -429,13 +480,19 @@ def main(HWRankAccelerationFactors, NWAccelerationFactors):
 				graph.backPropagateNetwork(NWAccelerationFactors[i][j], i, j)
 
 	#targetType1 = "MPI_Send_End"
-	#targetType2 = "Worker"
+	#targetType2 = "Arrow"
 	#speedupFactor = 0.7
 
 	#graph.printAllNodes()
 	#graph.backPropagate(targetType1, speedupFactor)
 	#graph.backPropagate(targetType2, speedupFactor)
+	#graph.backPropagateNetwork(2, 0, 1)
+	#graph.backPropagateHW(2, 0)
+	#graph.backPropagateHW(2, 1)
 	addPrimitvesToFile(primitiveList, newTextLogFile)
+
+	newTextLogFile.close()
+	oldTextlogFile.close()
 
 
 
