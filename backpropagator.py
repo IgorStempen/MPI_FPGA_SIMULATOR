@@ -165,6 +165,8 @@ class GraphWrapper:
 		self.graph = nx.DiGraph()
 		self.ranks = dict()
 		self.arrowList = list()
+		self.simEndTime = 0
+		self.originalSimEndTime = 0
 
 	#for every non message node, insert it directly after the last node of the same rank
 	def add_new_node(self, rank, node, updateEndTime):
@@ -277,6 +279,22 @@ class GraphWrapper:
 	def markAllNodesUnvisited(self):
 		for node in self.graph:
 			node.markNotVisited()
+
+
+	def setSimEndTime(self):
+		self.simEndTime = 0;
+		for node in self.graph.nodes(data=False):
+			if (True):
+				if (node.getEndTime() > self.simEndTime):
+					self.simEndTime = node.getEndTime()
+					if (self.originalSimEndTime == 0):
+						self.originalSimEndTime = self.simEndTime
+
+	def finalTimeAsPrimitive(self):
+		return "Primitive[ TimeBBox({0},{0}) Category=302 ({0}, 0) ]\n".format(str(self.simEndTime))
+
+	def originalTimeAsPrimitive(self):
+		return "Primitive[ TimeBBox({0},{0}) Category=301 ({0}, 0) ]\n".format(str(self.originalSimEndTime))
 
 
 
@@ -469,6 +487,8 @@ def main(HWRankAccelerationFactors, NWAccelerationFactors):
 
 	processTextLog(oldTextlogFile, newTextLogFile, categoryDict, primitiveList, graph)
 
+	graph.setSimEndTime()
+
 	#parse the arguments that have been passed in and see if we need to do any backpropogation
 	for i in range(len(HWRankAccelerationFactors)):
 		if (HWRankAccelerationFactors[i] != 1):
@@ -478,6 +498,8 @@ def main(HWRankAccelerationFactors, NWAccelerationFactors):
 		for j in range(len(NWAccelerationFactors[i])):
 			if (NWAccelerationFactors[i][j] != 1):
 				graph.backPropagateNetwork(NWAccelerationFactors[i][j], i, j)
+
+	graph.setSimEndTime()
 
 	#targetType1 = "MPI_Send_End"
 	#targetType2 = "Arrow"
@@ -490,6 +512,8 @@ def main(HWRankAccelerationFactors, NWAccelerationFactors):
 	#graph.backPropagateHW(2, 0)
 	#graph.backPropagateHW(2, 1)
 	addPrimitvesToFile(primitiveList, newTextLogFile)
+	newTextLogFile.write(graph.finalTimeAsPrimitive())
+	#newTextLogFile.write(graph.originalTimeAsPrimitive())
 
 	newTextLogFile.close()
 	oldTextlogFile.close()
