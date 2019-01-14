@@ -498,6 +498,7 @@ def main(HWRankAccelerationFactors, NWAccelerationFactors):
 		for j in range(len(NWAccelerationFactors[i])):
 			if (NWAccelerationFactors[i][j] != 1):
 				graph.backPropagateNetwork(NWAccelerationFactors[i][j], i, j)
+				graph.backPropagateNetwork(NWAccelerationFactors[i][j], j, i)
 
 	graph.setSimEndTime()
 
