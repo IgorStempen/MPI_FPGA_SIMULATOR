@@ -20,6 +20,8 @@ def startWorkflow(directory, input_params, network_connections, hardware_nodes):
 	for file in onlyfiles:
 		compile_command = compile_command + directory+'/'+file + ' '
 
+	compile_command = compile_command + '-lm'
+
 	os.chdir('build')
 	os.system(compile_command)
 	print(compile_command)
