@@ -1,6 +1,9 @@
 import glob
 import os
 import networkx as nx
+import sys
+
+sys.setrecursionlimit(100000)
 
 #################################################################################################
 #                                                                                     
