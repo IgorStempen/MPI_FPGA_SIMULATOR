@@ -29,3 +29,6 @@ Click on Save to Config to save the current state of the GUI to a config file. I
 
 Reading the simulator graphical output:
 
+The final simulation output uses MPE jumpshot. Explanation of how to use it can be found here: https://www.mcs.anl.gov/research/projects/perfvis/software/viewers/index.htm
+
+
