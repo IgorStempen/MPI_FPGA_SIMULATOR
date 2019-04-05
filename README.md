@@ -14,9 +14,11 @@ More information about the simulator implementation can be found in the Final Re
 How To Use Simulator:
 
 Starter_GUI:
+
 The starter GUI lets the user indicate how many network types (ex: Ethernet connection, FPGA to FPGA bus connection) exist in the hardware topology. The number ranks indicates number of MPI ranks in the program to be simulated. Alternatively, can open from a previously saved config file.
 
 Main GUI:
+
 In the top left box, the user can select the directory that contains the source files of the program to be simulated. They can also enter the command line arguments that would be used to run the program.
 
 The user can then enter network acceleration factors (how much faster or slower the network in the hardware topology would be) and which hardware ranks those network factors correspond to. Hardware acceleration factors corresponding to the specific MPI rank in software can also be entered.
@@ -26,3 +28,4 @@ Click Start Simulation to begin the simulation workflow. It will compile the sou
 Click on Save to Config to save the current state of the GUI to a config file. It will be saved to the same directory as the simulator.
 
 Reading the simulator graphical output:
+
