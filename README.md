@@ -7,3 +7,6 @@ Setup:
 3. Run 'sudo apt-get install python' to install python
 4. 
 5. run python 2_simulator_gui.py to start the program.
+
+
+More information about the simulator can be found in the Final Report Document.
